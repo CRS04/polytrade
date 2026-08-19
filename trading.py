@@ -6,12 +6,10 @@ import traceback                # Exception handling
 import pandas as pd             # Data analysis library
 import math                     # Mathematical functions
 
-import poly_data.global_state as global_state
-import poly_data.CONSTANTS as CONSTANTS
-
-# Import utility functions for trading
-from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
-from poly_data.data_utils import get_position, get_order, set_position
+import poly_maker.poly_data.global_state as global_state
+import poly_maker.poly_data.CONSTANTS as CONSTANTS
+from poly_maker.poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
+from poly_maker.poly_data.data_utils import get_position, get_order, set_position
 
 # Create directory for storing position risk information
 if not os.path.exists('positions/'):
@@ -188,7 +186,7 @@ async def perform_trade(market):
             # ------- TRADING LOGIC FOR EACH OUTCOME -------
             # Loop through both outcomes in the market (YES and NO)
             for detail in deets:
-                token = int(detail['token'])
+                token = str(detail['token'])
                 
                 # Get current orders for this token
                 orders = get_order(token)
@@ -197,8 +195,10 @@ async def perform_trade(market):
                 deets = get_best_bid_ask_deets(market, detail['name'], 100, 0.1)
 
                 #if deet has None for one these values below, call it with min size of 20
-                if deets['best_bid'] is None or deets['best_ask'] is None or deets['best_bid_size'] is None or deets['best_ask_size'] is None:
-                    deets = get_best_bid_ask_deets(market, detail['name'], 20, 0.1)
+                if (deets['best_bid'] is None or deets['best_ask'] is None or
+                    deets['best_bid_size'] is None or deets['best_ask_size'] is None or
+                    deets['top_bid'] is None or deets['top_ask'] is None):
+                    continue
                 
                 # Extract all order book details
                 best_bid = deets['best_bid']

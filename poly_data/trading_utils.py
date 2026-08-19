@@ -1,6 +1,6 @@
 import math 
-from poly_data.data_utils import update_positions
-import poly_data.global_state as global_state
+from poly_maker.poly_data.data_utils import update_positions
+import poly_maker.poly_data.global_state as global_state
 
 # def get_avgPrice(position, assetId):
 #     curr_global = global_state.all_positions[global_state.all_positions['asset'] == str(assetId)]
@@ -27,8 +27,20 @@ import poly_data.global_state as global_state
 
 def get_best_bid_ask_deets(market, name, size, deviation_threshold=0.05):
 
-    best_bid, best_bid_size, second_best_bid, second_best_bid_size, top_bid = find_best_price_with_size(global_state.all_data[market]['bids'], size, reverse=True)
-    best_ask, best_ask_size, second_best_ask, second_best_ask_size, top_ask = find_best_price_with_size(global_state.all_data[market]['asks'], size, reverse=False)
+    if market not in global_state.all_data or \
+       'bids' not in global_state.all_data[market] or \
+       'asks' not in global_state.all_data[market]:
+        return {
+            'best_bid': None, 'best_bid_size': None, 'second_best_bid': None, 'second_best_bid_size': None,
+            'top_bid': None, 'best_ask': None, 'best_ask_size': None, 'second_best_ask': None,
+            'second_best_ask_size': None, 'top_ask': None,
+            'bid_sum_within_n_percent': 0, 'ask_sum_within_n_percent': 0
+        }
+
+    best_bid, best_bid_size, second_best_bid, second_best_bid_size, top_bid = \
+        find_best_price_with_size(global_state.all_data[market]['bids'], size, reverse=True)
+    best_ask, best_ask_size, second_best_ask, second_best_ask_size, top_ask = \
+        find_best_price_with_size(global_state.all_data[market]['asks'], size, reverse=False)
     
     # Handle None values in mid_price calculation
     if best_bid is not None and best_ask is not None:
@@ -81,6 +93,9 @@ def get_best_bid_ask_deets(market, name, size, deviation_threshold=0.05):
 
 
 def find_best_price_with_size(price_dict, min_size, reverse=False):
+    if not price_dict:  # None oder leeres Dict
+        return None, None, None, None, None
+    
     lst = list(price_dict.items())
 
     if reverse:
@@ -188,9 +203,10 @@ def get_buy_sell_amount(position, bid_price, row, other_token_position=0):
 
     # Apply multiplier for low-priced assets
     if bid_price < 0.1 and buy_amount > 0:
-        if row['multiplier'] != '':
-            print(f"Multiplying buy amount by {int(row['multiplier'])}")
-            buy_amount = buy_amount * int(row['multiplier'])
+        mult = row.get('multiplier', '')
+        if mult != '':
+            print(f"Multiplying buy amount by {int(mult)}")
+            buy_amount = buy_amount * int(mult)
 
     return buy_amount, sell_amount
 

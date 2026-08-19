@@ -8,7 +8,7 @@ Poly-Maker is a comprehensive solution for automated market making on Polymarket
 
 - Real-time order book monitoring via WebSockets
 - Position management with risk controls
-- Customizable trade parameters fetched from Google Sheets
+- Customizable trade parameters read from a local `config.json`
 - Automated position merging functionality
 - Sophisticated spread and price management
 
@@ -26,15 +26,19 @@ The repository consists of several interconnected modules:
 
 - Python 3.9 with latest setuptools
 - Node.js (for poly_merger)
-- Google Sheets API credentials
 - Polymarket account and API credentials
+- Google Sheets API credentials (only for `data_updater` / `poly_stats`)
 
 ## Installation
 
 1. **Clone the repository**:
+
+The trading modules import each other as `poly_maker.*`, so the checkout directory
+must be named `poly_maker`:
+
 ```
-git clone https://github.com/yourusername/poly-maker.git
-cd poly-maker
+git clone https://github.com/CRS04/polytrade.git poly_maker
+cd poly_maker
 ```
 
 2. **Install Python dependencies**:
@@ -60,30 +64,39 @@ cp .env.example .env
 
 Make sure your wallet has done at least one trade thru the UI so that the permissions are proper.
 
-6. **Set up Google Sheets integration**:
-   - Create a Google Service Account and download credentials to the main directory
-   - Copy the [sample Google Sheet](https://docs.google.com/spreadsheets/d/1Kt6yGY7CZpB75cLJJAdWo7LSp9Oz7pjqfuVWwgtn7Ns/edit?gid=1884499063#gid=1884499063)
-   - Add your Google service account to the sheet with edit permissions
-   - Update `SPREADSHEET_URL` in your `.env` file
-
-7. **Update market data**:
-   - Run `python update_markets.py` to fetch all available markets
-   - This should run continuously in the background (preferably on a different IP than your trading bot)
-   - Add markets you want to trade to the "Selected Markets" sheet. You'd wanna select markets from the "Volatility Markets" sheet.
-   - Configure corresponding parameters in the "Hyperparameters" sheet. Default parameters that worked well in November are there.
-
-8. **Start the market making bot**:
+6. **Create your market configuration**:
 ```
-python main.py
+cp config.example.json config.json
+```
+Fill in the real token IDs and sizing parameters. `config.json` is gitignored.
+
+7. **Start the market making bot**:
+
+Run it as a package from the *parent* directory of the checkout:
+```
+cd ..
+python -m poly_maker.main
 ```
 
 ## Configuration
 
-The bot is configured via a Google Spreadsheet with several worksheets:
+The bot reads its markets and hyperparameters from a JSON file, by default
+`config.json` in the repository root. Set `CONFIG_JSON` in `.env` to point
+somewhere else. See `config.example.json` for the schema:
 
-- **Selected Markets**: Markets you want to trade
-- **All Markets**: Database of all markets on Polymarket
-- **Hyperparameters**: Configuration parameters for the trading logic
+- **markets**: one entry per market with `token1`/`token2`, `baseSize`,
+  `minEdge` and `maxInventory`. Entries with `"active": false` are skipped.
+- **hyperparameters**: global trading logic settings.
+
+### Google Sheets modules (optional)
+
+`update_markets.py` and `update_stats.py` still use the original Google Sheets
+workflow and are independent of the trading bot. To use them, create a Google
+Service Account, place its `credentials.json` in the main directory, copy the
+[sample Google Sheet](https://docs.google.com/spreadsheets/d/1Kt6yGY7CZpB75cLJJAdWo7LSp9Oz7pjqfuVWwgtn7Ns/edit?gid=1884499063#gid=1884499063),
+grant the service account edit permission and set `SPREADSHEET_URL` in `.env`.
+These scripts use top-level imports, so run them from inside the repository
+directory.
 
 
 ## Poly Merger

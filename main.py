@@ -3,12 +3,14 @@ import time                    # Time functions
 import asyncio                 # Asynchronous I/O
 import traceback               # Exception handling
 import threading               # Thread management
+import contextlib
 
-from poly_data.polymarket_client import PolymarketClient
-from poly_data.data_utils import update_markets, update_positions, update_orders
-from poly_data.websocket_handlers import connect_market_websocket, connect_user_websocket
-import poly_data.global_state as global_state
-from poly_data.data_processing import remove_from_performing
+from poly_maker.poly_data.polymarket_client import PolymarketClient
+from poly_maker.poly_data.data_utils import update_markets, update_positions, update_orders, reconcile_orders_vs_config
+from poly_maker.poly_data.websocket_handlers import connect_market_websocket, connect_user_websocket
+import poly_maker.poly_data.global_state as global_state
+from poly_maker.poly_data.data_processing import remove_from_performing
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -68,6 +70,7 @@ def update_periodically():
             # Update market data every 6th cycle (30 seconds)
             if i % 6 == 0:
                 update_markets()
+                reconcile_orders_vs_config()
                 i = 1
                     
             gc.collect()  # Force garbage collection to free memory
@@ -94,7 +97,29 @@ async def main():
     # Start background update thread
     update_thread = threading.Thread(target=update_periodically, daemon=True)
     update_thread.start()
-    
+
+    while True:
+        try:
+            m_task = asyncio.create_task(connect_market_websocket(global_state.all_tokens))
+            u_task = asyncio.create_task(connect_user_websocket())
+
+            done, pending = await asyncio.wait({m_task, u_task}, return_when=asyncio.FIRST_COMPLETED)
+
+            # übrig gebliebene Verbindung sauber beenden
+            for p in pending:
+                p.cancel()
+                with contextlib.suppress(Exception):
+                    await p
+
+            print("Reconnecting to the websocket")
+        except:
+            print("Error in main loop")
+            print(traceback.format_exc())
+
+        await asyncio.sleep(1)
+        gc.collect()
+
+    """""
     # Main loop - maintain websocket connections
     while True:
         try:
@@ -110,6 +135,6 @@ async def main():
             
         await asyncio.sleep(1)
         gc.collect()  # Clean up memory
-
+    """
 if __name__ == "__main__":
     asyncio.run(main())

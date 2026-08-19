@@ -3,8 +3,8 @@ import json                        # JSON handling
 import websockets                  # WebSocket client
 import traceback                   # Exception handling
 
-from poly_data.data_processing import process_data, process_user_data
-import poly_data.global_state as global_state
+from poly_maker.poly_data.data_processing import process_data, process_user_data
+import poly_maker.poly_data.global_state as global_state
 
 async def connect_market_websocket(chunk):
     """
@@ -25,7 +25,8 @@ async def connect_market_websocket(chunk):
     uri = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     async with websockets.connect(uri, ping_interval=5, ping_timeout=None) as websocket:
         # Prepare and send subscription message
-        message = {"assets_ids": chunk}
+        assets = [str(a) for a in chunk if a]           # (optional) sanitisieren
+        message = {"type": "market", "assets_ids": assets}
         await websocket.send(json.dumps(message))
 
         print("\n")
@@ -36,8 +37,14 @@ async def connect_market_websocket(chunk):
             while True:
                 message = await websocket.recv()
                 json_data = json.loads(message)
-                # Process order book updates and trigger trading as needed
                 process_data(json_data)
+                # Hot-reload-Check
+                if getattr(global_state, "ws_resubscribe_needed", False):
+                    global_state.ws_resubscribe_needed = False
+                    # sauber schließen -> raus aus der Funktion -> main macht reconnect
+                    await websocket.close()
+                    break
+
         except websockets.ConnectionClosed:
             print("Connection closed in market websocket")
             print(traceback.format_exc())
@@ -68,9 +75,9 @@ async def connect_user_websocket():
         message = {
             "type": "user",
             "auth": {
-                "apiKey": global_state.client.client.creds.api_key, 
-                "secret": global_state.client.client.creds.api_secret,  
-                "passphrase": global_state.client.client.creds.api_passphrase
+                "apiKey": global_state.client.creds.api_key,
+                "secret": global_state.client.creds.api_secret,
+                "passphrase": global_state.client.creds.api_passphrase,
             }
         }
 

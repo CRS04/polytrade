@@ -1,8 +1,8 @@
-import poly_data.global_state as global_state
-from poly_data.utils import get_sheet_df
+import poly_maker.poly_data.global_state as global_state
+from poly_maker.poly_data.utils import get_sheet_df
 import time
-import poly_data.global_state as global_state
 
+"""""
 #sth here seems to be removing the position
 def update_positions(avgOnly=False):
     pos_df = global_state.client.get_all_positions()
@@ -42,6 +42,49 @@ def update_positions(avgOnly=False):
                     print(f"ALERT: Skipping update for {asset} because there are trades pending for {col} looking like {global_state.performing[col]}")
     
         global_state.positions[asset] = position
+"""
+
+def update_positions(avgOnly=False):
+    pos_df = global_state.client.get_all_positions()
+
+    if pos_df is None or len(pos_df) == 0:
+        return
+
+    # nur die Felder nehmen, die wir wirklich brauchen
+    for col in ("asset", "size", "avgPrice"):
+        if col not in pos_df.columns:
+            return  # still aussteigen, nichts zu updaten
+
+    # Typen absichern
+    pos_df["asset"] = pos_df["asset"].astype(str)
+    pos_df["size"] = pos_df["size"].astype(float)
+    pos_df["avgPrice"] = pos_df["avgPrice"].astype(float)
+
+    for _, row in pos_df.iterrows():
+        asset = row["asset"]
+        position = global_state.positions.get(asset, {'size': 0.0, 'avgPrice': 0.0}).copy()
+
+        position['avgPrice'] = row['avgPrice']
+
+        if not avgOnly:
+            position['size'] = row['size']
+        else:
+            for col in (f"{asset}_sell", f"{asset}_buy"):
+                if col not in global_state.performing or not isinstance(global_state.performing[col], set) or len(global_state.performing[col]) == 0:
+                    old_size = position.get('size', 0.0)
+
+                    if asset in global_state.last_trade_update and time.time() - global_state.last_trade_update[asset] < 5:
+                        # frisch geupdatet – überspringen
+                        continue
+
+                    if old_size != row['size']:
+                        print(f"No trades pending. Updating position {asset} from {old_size} -> {row['size']} (avg {row['avgPrice']}) via API")
+                    position['size'] = row['size']
+                else:
+                    print(f"ALERT: Skipping update for {asset} because trades pending for {col}: {global_state.performing[col]}")
+
+        global_state.positions[asset] = position
+
 
 def get_position(token):
     token = str(token)
@@ -149,22 +192,41 @@ def update_markets():
     received_df, received_params = get_sheet_df()
 
     if len(received_df) > 0:
+        old_tokens = set(map(str, getattr(global_state, "all_tokens", [])))
         global_state.df, global_state.params = received_df.copy(), received_params
-    
 
-    for _, row in global_state.df.iterrows():
-        for col in ['token1', 'token2']:
-            row[col] = str(row[col])
+        # baue neue Tokenliste (wie bisher – hier nur token1; nimm token2 dazu, falls du beide Streams brauchst)
+        new_tokens = []
+        for _, row in global_state.df.iterrows():
+            for col in ("token1", "token2"):
+                row[col] = str(row[col])
+            if row["token1"] not in new_tokens:
+                new_tokens.append(row["token1"])
+            # REVERSE_TOKENS pflegen wie gehabt …
+            if row["token1"] not in global_state.REVERSE_TOKENS:
+                global_state.REVERSE_TOKENS[row["token1"]] = row["token2"]
+            if row["token2"] not in global_state.REVERSE_TOKENS:
+                global_state.REVERSE_TOKENS[row["token2"]] = row["token1"]
+            # performing-Keys initialisieren …
+            for col2 in (f"{row['token1']}_buy", f"{row['token1']}_sell",
+                        f"{row['token2']}_buy", f"{row['token2']}_sell"):
+                global_state.performing.setdefault(col2, set())
 
-        if row['token1'] not in global_state.all_tokens:
-            global_state.all_tokens.append(row['token1'])
+        # Hot-reload: hat sich das Set geändert?
+        if set(new_tokens) != old_tokens:
+            global_state.all_tokens = new_tokens
+            global_state.ws_resubscribe_needed = True
 
-        if row['token1'] not in global_state.REVERSE_TOKENS:
-            global_state.REVERSE_TOKENS[row['token1']] = row['token2']
-
-        if row['token2'] not in global_state.REVERSE_TOKENS:
-            global_state.REVERSE_TOKENS[row['token2']] = row['token1']
-
-        for col2 in [f"{row['token1']}_buy", f"{row['token1']}_sell", f"{row['token2']}_buy", f"{row['token2']}_sell"]:
-            if col2 not in global_state.performing:
-                global_state.performing[col2] = set()
+# poly_data/data_utils.py
+def reconcile_orders_vs_config():
+    active = set(map(str, global_state.df["token1"]))  # ggf. token2 ergänzen
+    for token in list(global_state.orders.keys()):
+        if token not in active:
+            try:
+                global_state.client.cancel_all_asset(token)
+            except Exception as e:
+                print("Cancel on removed market failed:", token, e)
+            finally:
+                global_state.orders.pop(token, None)
+                for s in ("buy","sell"):
+                    global_state.performing.get(f"{token}_{s}", set()).clear()

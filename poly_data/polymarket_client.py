@@ -8,7 +8,8 @@ from py_clob_client.constants import POLYGON
 
 # Web3 libraries for blockchain interaction
 from web3 import Web3
-from web3.middleware import geth_poa_middleware
+#from web3.middleware import geth_poa_middleware
+from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware
 from eth_account import Account
 
 import requests                     # HTTP requests
@@ -18,11 +19,19 @@ import subprocess                   # For calling external processes
 
 from py_clob_client.clob_types import OpenOrderParams
 
+
+from vault_utilis import get_polymarket_config
+
 # Smart contract ABIs
-from poly_data.abis import NegRiskAdapterABI, ConditionalTokenABI, erc20_abi
+from poly_maker.poly_data.abis import NegRiskAdapterABI, ConditionalTokenABI, erc20_abi
 
 # Load environment variables
 load_dotenv()
+
+pd.set_option('display.max_columns', None)   # show all columns
+pd.set_option('display.width', None)         # don't wrap columns
+pd.set_option('display.max_rows', None)      # show all rows
+
 
 
 class PolymarketClient:
@@ -45,10 +54,20 @@ class PolymarketClient:
         Args:
             pk (str, optional): Private key identifier, defaults to 'default'
         """
-        host="https://clob.polymarket.com"
+        #host="https://clob.polymarket.com"
 
         # Get credentials from environment variables
-        key=os.getenv("PK")
+        config = get_polymarket_config()
+        self.client = ClobClient(
+            config["host"],
+            key=config["priv_key"],
+            chain_id=config["chain_id"],
+            signature_type=1,
+            funder=config["proxy_address"], 
+        )
+        self.owner_address = "0xC530AF35456b56C65741d963Aaf83ebc27D95b79"
+
+        """
         browser_address = os.getenv("BROWSER_ADDRESS")
 
         # Don't print sensitive wallet information
@@ -64,15 +83,17 @@ class PolymarketClient:
             funder=self.browser_wallet,
             signature_type=2
         )
-
+        """
         # Set up API credentials
         self.creds = self.client.create_or_derive_api_creds()
         self.client.set_api_creds(creds=self.creds)
         
         # Initialize Web3 connection to Polygon
-        web3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
-        web3.middleware_onion.inject(geth_poa_middleware, layer=0)
-        
+        #web3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+        #web3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        web3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        web3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+
         # Set up USDC contract for balance checks
         self.usdc_contract = web3.eth.contract(
             address="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", 
@@ -96,7 +117,7 @@ class PolymarketClient:
             address=self.addresses['conditional_tokens'], 
             abi=ConditionalTokenABI
         )
-
+        
         self.web3 = web3
 
     
@@ -151,25 +172,31 @@ class PolymarketClient:
         orderBook = self.client.get_order_book(market)
         return pd.DataFrame(orderBook.bids).astype(float), pd.DataFrame(orderBook.asks).astype(float)
 
-
+    """
     def get_usdc_balance(self):
-        """
+        
         Get the USDC balance of the connected wallet.
         
         Returns:
             float: USDC balance in decimal format
-        """
+        
         return self.usdc_contract.functions.balanceOf(self.browser_wallet).call() / 10**6
-     
+
+
     def get_pos_balance(self):
-        """
+        
         Get the total value of all positions for the connected wallet.
         
         Returns:
             float: Total position value in USDC
-        """
+        
         res = requests.get(f'https://data-api.polymarket.com/value?user={self.browser_wallet}')
         return float(res.json()['value'])
+    """
+
+    def get_usdc_balance(self):
+        return self.usdc_contract.functions.balanceOf(self.owner_address).call() / 10**6
+
 
     def get_total_balance(self):
         """
@@ -179,19 +206,16 @@ class PolymarketClient:
             float: Total account value in USDC
         """
         return self.get_usdc_balance() + self.get_pos_balance()
-
+    """
     def get_all_positions(self):
-        """
         Get all positions for the connected wallet across all markets.
         
         Returns:
             DataFrame: All positions with details like market, size, avgPrice
-        """
         res = requests.get(f'https://data-api.polymarket.com/positions?user={self.browser_wallet}')
         return pd.DataFrame(res.json())
     
     def get_raw_position(self, tokenId):
-        """
         Get the raw token balance for a specific market outcome token.
         
         Args:
@@ -199,9 +223,12 @@ class PolymarketClient:
             
         Returns:
             int: Raw token amount (before decimal conversion)
-        """
         return int(self.conditional_tokens.functions.balanceOf(self.browser_wallet, int(tokenId)).call())
 
+    def get_pos_balance(self):
+        res = requests.get(f'https://data-api.polymarket.com/value?user={self.owner_address}')
+        return float(res.json()['value'])
+"""
     def get_position(self, tokenId):
         """
         Get both raw and formatted position size for a token.
@@ -222,6 +249,29 @@ class PolymarketClient:
 
         return raw_position, shares
     
+    def get_raw_position(self, tokenId):
+        return int(self.conditional_tokens.functions.balanceOf(self.owner_address, int(tokenId)).call())
+
+    def get_pos_balance(self):
+        r = requests.get(f"https://data-api.polymarket.com/value?user={self.owner_address}")
+        data = r.json()
+        # normalize to "first item" dict
+        first = (data[0] if isinstance(data, list) and data else data)
+        # if it’s already a number, return it; else read keys
+        if isinstance(first, (int, float, str)):
+            return float(first)
+        return float(first.get("value", first.get("portfolioValue", 0)))
+    
+    def get_all_positions(self):
+        """
+        Get all positions for the connected wallet across all markets.
+        
+        Returns:
+            DataFrame: All positions with details like market, size, avgPrice
+        """
+        res = requests.get(f"https://data-api.polymarket.com/positions?user={self.owner_address}")
+        return pd.DataFrame(res.json())
+
     def get_all_orders(self):
         """
         Get all open orders for the connected wallet.
@@ -318,3 +368,8 @@ class PolymarketClient:
 
         # Return the transaction hash or output
         return result.stdout
+
+if __name__ == "__main__":
+
+        pc = PolymarketClient()
+        print(pc.get_all_positions())

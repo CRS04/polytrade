@@ -47,3 +47,5 @@ orders = {}
 # Format: {token_id: {'size': float, 'avgPrice': float}}
 positions = {}
 
+# Resubscribe needed
+ws_resubscribe_needed = False
